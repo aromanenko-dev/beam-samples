@@ -23,6 +23,7 @@ import java.util.Date;
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.PipelineResult;
 import org.apache.beam.sdk.io.kafka.KafkaIO;
+import org.apache.beam.sdk.metrics.*;
 import org.apache.beam.sdk.options.Default;
 import org.apache.beam.sdk.options.DefaultValueFactory;
 import org.apache.beam.sdk.options.Description;
@@ -33,6 +34,7 @@ import org.apache.beam.sdk.transforms.ParDo;
 import org.apache.beam.sdk.transforms.Values;
 import org.apache.beam.sdk.values.KV;
 import org.apache.beam.sdk.values.PCollection;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.codehaus.jackson.map.ser.std.StringSerializer;
 import org.joda.time.Duration;
 import org.slf4j.Logger;
@@ -95,15 +97,21 @@ public class KafkaToKafka {
         PCollection<String> data =
             pipeline
                 .apply("ReadFromKafka", KafkaIO.<String, String>read()
-                    .withBootstrapServers(options.getKafkaServer())
+                    .withKeyDeserializer(StringDeserializer.class)
+                        .withValueDeserializer(StringDeserializer.class)
+                        .withBootstrapServers(options.getKafkaServer())
                     .withTopics(Collections.singletonList(options.getInputTopic()))
                     .withoutMetadata()
                 )
                 .apply("ExtractPayload", Values.<String>create());
 
         data.apply(ParDo.of(new DoFn<String, String>() {
+            private final Counter elementsCounter =
+                    Metrics.counter("samples" , "elements");
+
             @ProcessElement
             public void processElement(ProcessContext c) {
+                elementsCounter.inc(1);
                 System.out.println(String.format("** element |%s| **", c.element()));
             }
         }));
@@ -134,7 +142,7 @@ public class KafkaToKafka {
                 .withTopic(options.getOutputTopic())
                     .withKeySerializer(org.apache.kafka.common.serialization.StringSerializer.class)
                 .withValueSerializer(org.apache.kafka.common.serialization.StringSerializer.class));
-        PipelineResult run = pipeline.run();
-        run.waitUntilFinish(Duration.standardSeconds(options.getDuration()));
+        PipelineResult pipelineResult = pipeline.run();
+        pipelineResult.waitUntilFinish(Duration.standardSeconds(options.getDuration()));
     }
 }
